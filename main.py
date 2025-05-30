@@ -12,10 +12,21 @@ book_path = "book.txt"
 index_path = "faiss_index"
 model_name = "mistralai/Mistral-7B-Instruct-v0.2"
 
+def is_faiss_index_valid(path):
+    return (
+        os.path.isdir(path) and
+        os.path.exists(os.path.join(path, "index.faiss")) and
+        any(fname.endswith(".pkl") or fname.endswith(".json") for fname in os.listdir(path))
+    )
 
 def preprocess_book(book_path=book_path, index_path=index_path):
-    if not os.path.exists(book_path):
-        raise FileNotFoundError(f"Файл '{book_path}' не найден. Убедитесь, что он находится в рабочей директории.")
+    if not is_faiss_index_valid(index_path):
+        print("Создание нового индекса...")
+        vectorstore, embedding_model = preprocess_book()
+    else:
+        print("Индекс найден. Загружаем...")
+        embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        vectorstore = FAISS.load_local(index_path, embedding_model, allow_dangerous_deserialization=True)
 
     # Загрузка текста
     with open(book_path, "r", encoding="utf-8") as f:
@@ -64,8 +75,7 @@ def load_model(model_name=model_name):
         max_new_tokens=528,
         return_full_text=False,
         do_sample=True,
-        pad_token_id=tokenizer.eos_token_id,
-        device=0 if device == "cuda" else -1
+        pad_token_id=tokenizer.eos_token_id
     )
 
     llm = HuggingFacePipeline(pipeline=hf_pipeline)
