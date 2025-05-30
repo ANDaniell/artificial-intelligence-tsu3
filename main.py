@@ -4,39 +4,35 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline, BitsAndBytesConfig
 from langchain_huggingface.llms import HuggingFacePipeline
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_huggingface.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain.chains import RetrievalQA
+from langchain_huggingface.embeddings import HuggingFaceEmbeddings  # Модель эмбеддингов
+from langchain_community.vectorstores import FAISS  # Векторное хранилище FAISS
+from langchain.chains import RetrievalQA  # Цепочка для поиска и ответа
 
 book_path = "book.txt"
 index_path = "faiss_index"
 model_name = "mistralai/Mistral-7B-Instruct-v0.2"
 
+
+# Проверка наличия корректного FAISS-индекса
 def is_faiss_index_valid(path):
     return (
-        os.path.isdir(path) and
-        os.path.exists(os.path.join(path, "index.faiss")) and
-        any(fname.endswith(".pkl") or fname.endswith(".json") for fname in os.listdir(path))
+            os.path.isdir(path) and
+            os.path.exists(os.path.join(path, "index.faiss")) and
+            any(fname.endswith(".pkl") or fname.endswith(".json") for fname in os.listdir(path))
     )
 
-def preprocess_book(book_path=book_path, index_path=index_path):
-    if not is_faiss_index_valid(index_path):
-        print("Создание нового индекса...")
-        vectorstore, embedding_model = preprocess_book()
-    else:
-        print("Индекс найден. Загружаем...")
-        embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        vectorstore = FAISS.load_local(index_path, embedding_model, allow_dangerous_deserialization=True)
 
+# Предобработка текста и построение индекса (если он отсутствует)
+def preprocess_book(book_path=book_path, index_path=index_path):
     # Загрузка текста
     with open(book_path, "r", encoding="utf-8") as f:
         text = f.read()
 
-    # Разделение текста на фрагменты
+    # Разделение текста на фрагменты (чанки)
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
     docs = text_splitter.create_documents([text])
 
-    # Добавление метаданных
+    # Добавление индексов чанков в метаданные
     for i, doc in enumerate(docs):
         doc.metadata["chunk_index"] = i
 
@@ -47,15 +43,17 @@ def preprocess_book(book_path=book_path, index_path=index_path):
     return vectorstore, embedding_model
 
 
+# Загрузка языковой модели
 def load_model(model_name=model_name):
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Конфигурация для загрузки модели в 4-битном формате для RTX 4060
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_use_double_quant=True,
         bnb_4bit_quant_type="nf4",
         bnb_4bit_compute_dtype=torch.float16
     )
-
+    # Загрузка модели с учетом устройства
     if device == "cuda":
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
@@ -66,12 +64,12 @@ def load_model(model_name=model_name):
         model = AutoModelForCausalLM.from_pretrained(model_name)
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-
+    # Обертка pipeline Hugging Face
     hf_pipeline = pipeline(
         task="text-generation",
         model=model,
         tokenizer=tokenizer,
-        temperature=0.3,
+        temperature=0.3,  # Меньше — детерминированнее
         max_new_tokens=528,
         return_full_text=False,
         do_sample=True,
@@ -82,6 +80,7 @@ def load_model(model_name=model_name):
     return llm
 
 
+# Запуск цепочки QA на списке вопросов
 def run_qa(qa_chain, questions):
     results = []
     for q in questions:
@@ -97,12 +96,13 @@ def run_qa(qa_chain, questions):
 
 if __name__ == "__main__":
     # Предобработка (если индекс отсутствует)
-    if not os.path.exists(index_path):
+    if not is_faiss_index_valid(index_path):
+        print("Создание нового индекса...")
         vectorstore, embedding_model = preprocess_book()
     else:
+        print("Индекс найден. Загружаем...")
         embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         vectorstore = FAISS.load_local(index_path, embedding_model, allow_dangerous_deserialization=True)
-
     # Загрузка модели
     llm = load_model()
 
